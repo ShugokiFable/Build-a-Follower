@@ -77,8 +77,10 @@ Shouts stay **disabled** (vanilla engine save-corruption risk — same warning a
 
 ## Changelog
 
-### 2.4.1
-- **Critical CTD fix.** 2.4.0 forced CharGen paths like `../Exported/Kimi`, which RaceMenu resolved to `CharGen\Exported\../Exported\…` and crashed skee64 with `LargestInt out of UInt range` (see crash-2026-07-17-13-01-11). Load path is the preset name again; tintless / Save-my-face logic kept.
+### 2.4.1 — critical crash fix
+- **Fixed a hard crash on Apply** (`skee64.dll` → `std::runtime_error: "LargestInt out of UInt range"`). 2.4.0 copied a picked preset from `CharGen/Presets` into `CharGen/Exported` by round-tripping it through JContainers. JContainers stores integers as **signed** 32-bit, so RaceMenu's unsigned `tintInfo` colors (any with a high alpha byte) were rewritten **negative** — and RaceMenu's own JSON parser crashes reading a negative value as unsigned. The mod no longer rewrites `.jslot` files at all; it reads the preset in place, exactly like the original.
+- If you used 2.4.0: delete any `Data\SKSE\Plugins\CharGen\Exported\*.jslot` files dated the day you ran 2.4.0 (they're corrupt copies — your originals are safe in `CharGen\Presets\`).
+- Everything else from 2.4.0 is kept (all of it is crash-safe): the tint-aware apply, "Save my face for followers", dark-face rebuild, Reset/Teleport safety.
 
 ### 2.4.0
 - **Blue face / skin-tone mismatch fixed (root cause).** RaceMenu `LoadCharacterEx` pins the head tint to `Textures/CharGen/Exported/<name>.dds`. Missing file → blue/purple head (or Face Discoloration Fix repaint that no longer matches body). Pipeline is now tint-aware; tintless presets apply morphs without skin override and clear the broken mapping.

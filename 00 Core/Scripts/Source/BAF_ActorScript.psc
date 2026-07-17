@@ -255,48 +255,48 @@ function applyPresetPipeline(bool fullRefresh = false)
 		applyMode = ensureSkinBodyFlags(liteMode)
 	endIf
 
-	; --- Tint-aware apply ---
-	; CRITICAL: pass myPreset (e.g. "Kimi") to CharGen APIs — NEVER "../Exported/"+name.
-	; 2.4.0 forced "../Exported/" and skee resolved
-	;   SKSE\Plugins\CharGen\Exported\../Exported/Kimi.jslot
-	;   Textures\CharGen\Exported\../Exported/Kimi.dds
-	; which threw runtime_error "LargestInt out of UInt range" (crash log 2026-07-17).
-	; Tint presence is still checked under Textures/CharGen/Exported/<base>.dds
-	; (that is the real blue-face file). Missing => tintless morph apply.
+	; --- Read the preset IN PLACE (never rewrite a .jslot) ---
+	; CRITICAL: do NOT round-trip a .jslot through JContainers. JContainers stores
+	; ints as signed int32, so RaceMenu's UInt tintInfo colors (alpha 0xFF..) get
+	; written back negative; RaceMenu's JSON parser then throws
+	; "LargestInt out of UInt range" and hard-crashes on the next apply.
+	; myPreset already carries its own ../Exported/ or ../Presets/ prefix, so we
+	; hand it straight to CharGen and RaceMenu reads its own untouched file.
 	String baseName = presetBaseName(myPreset)
-	String loadPath = myPreset
-	if loadPath == ""
-		loadPath = baseName
+	String presetDir = "Exported"
+	if StringUtil.Find(myPreset, "Presets") > -1
+		presetDir = "Presets"
 	endIf
-	ensureExportedJslot(baseName)
 
-	bool hasTintMask = MiscUtil.FileExists("Data/Textures/CharGen/Exported/" + baseName + ".dds")
-	bool hasExternalTrio = hasTintMask && MiscUtil.FileExists("Data/Meshes/CharGen/Exported/" + baseName + ".nif") && MiscUtil.FileExists("Data/SKSE/Plugins/CharGen/Exported/" + baseName + ".jslot")
-	myTintlessMode = !hasTintMask
+	; RaceMenu resolves the head tint to Textures/CharGen/<same folder>/<name>.dds.
+	bool hasTintMask = MiscUtil.FileExists("Data/Textures/CharGen/" + presetDir + "/" + baseName + ".dds")
+	; A full head export (from "Save my face for followers") lives only in Exported.
+	bool hasExternalHead = MiscUtil.FileExists("Data/Meshes/CharGen/Exported/" + baseName + ".nif") && MiscUtil.FileExists("Data/Textures/CharGen/Exported/" + baseName + ".dds") && MiscUtil.FileExists("Data/SKSE/Plugins/CharGen/Exported/" + baseName + ".jslot")
+	myTintlessMode = !hasTintMask && !hasExternalHead
 
-	if hasExternalTrio && myHeadMesh != ""
-		; Full export trio (from "Save my face for followers"): engine-native bake
-		dout("Applying external character (baked FaceGen) - " + loadPath)
-		CharGen.LoadExternalCharacterEx(self, myPresetRace, loadPath, applyMode)
+	if hasExternalHead
+		; Baked head export exists: copy head nif + tint into this template's
+		; FaceGen and refresh the live tint. Engine-native path, best quality.
+		dout("Applying external character (baked FaceGen) - " + baseName)
+		CharGen.LoadExternalCharacterEx(self, myPresetRace, baseName, applyMode)
 		Utility.Wait(0.15)
-		; Re-blend neck: skin then body morphs after the head swap
-		CharGen.LoadCharacterEx(self, myPresetRace, loadPath, 8)  ; SkinOverrides
+		CharGen.LoadCharacterEx(self, myPresetRace, myPreset, 8)  ; SkinOverrides
 		Utility.Wait(0.05)
-		CharGen.LoadCharacterEx(self, myPresetRace, loadPath, 2)  ; BodyMorphs
+		CharGen.LoadCharacterEx(self, myPresetRace, myPreset, 2)  ; BodyMorphs
 	elseIf hasTintMask
-		; jslot + Textures/.../Exported tint mask: full apply is safe
-		dout("Applying preset mode=" + applyMode + " - " + loadPath)
-		CharGen.LoadCharacterEx(self, myPresetRace, loadPath, applyMode)
+		; jslot + its exported tint mask both present: standard full apply is safe
+		dout("Applying preset mode=" + applyMode + " - " + baseName)
+		CharGen.LoadCharacterEx(self, myPresetRace, myPreset, applyMode)
 		Utility.Wait(0.15)
-		CharGen.LoadCharacterEx(self, myPresetRace, loadPath, 2)
+		CharGen.LoadCharacterEx(self, myPresetRace, myPreset, 2)  ; overlay/body pass
 	else
-		; No Textures/CharGen/Exported tint. Do NOT pass SkinOverrides (bit 8) —
-		; that is what pins a missing tint and blues the head. Morphs only, then
-		; clear the actorbase mapping so head regens do not reinstall the broken path.
-		; (F5 DDS under SKSE/Plugins/CharGen does NOT satisfy the engine tint slot.)
+		; No exported tint mask -> applying SkinOverrides would pin the head to a
+		; missing tint texture (grey/blue mismatch). Apply face morphs WITHOUT skin
+		; so head and body both keep the template tone (they match), then clear the
+		; RaceMenu mapping so head regens do not re-install a missing tint.
 		int safeMode = Math.LogicalAnd(applyMode, 7) ; drop SkinOverrides(8)
-		dout("Tintless preset - one-shot apply mode=" + safeMode + " - " + loadPath)
-		CharGen.LoadCharacterEx(self, myPresetRace, loadPath, safeMode)
+		dout("Tintless preset - one-shot apply mode=" + safeMode + " - " + baseName)
+		CharGen.LoadCharacterEx(self, myPresetRace, myPreset, safeMode)
 		Utility.Wait(0.15)
 		CharGen.ClearPreset(myActorBase)
 	endIf
@@ -387,25 +387,6 @@ String function presetBaseName(String presetPath)
 		slash = StringUtil.Find(baseName, "\\")
 	endWhile
 	return baseName
-endFunction
-
-; RaceMenu's loaders and their tint path are rooted in CharGen/Exported. If the
-; picked .jslot only exists in CharGen/Presets (RaceMenu's own save folder),
-; copy the JSON over so the apply and its tint path resolve consistently.
-function ensureExportedJslot(String baseName)
-	String dst = "Data/SKSE/Plugins/CharGen/Exported/" + baseName + ".jslot"
-	if MiscUtil.FileExists(dst)
-		return
-	endIf
-	String src = "Data/SKSE/Plugins/CharGen/Presets/" + baseName + ".jslot"
-	if MiscUtil.FileExists(src)
-		int presetJson = JValue.readFromFile(src)
-		if presetJson != 0
-			JValue.writeToFile(presetJson, dst)
-			presetJson = JValue.release(presetJson)
-			dout("Copied preset from Presets to Exported - " + baseName)
-		endIf
-	endIf
 endFunction
 
 ; True while this NPC is parked (disabled or physically in the storage cell).

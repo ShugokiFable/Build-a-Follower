@@ -1,0 +1,1 @@
+Saved NPC .json files land in this folder ("Save each NPC separately" in the MCM SaveLoad page).

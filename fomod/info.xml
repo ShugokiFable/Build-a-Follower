@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<fomod>
+  <Name>Build a Follower</Name>
+  <Author>karlo (rework of Lazy Followers by LazyGirl)</Author>
+  <Version>2.4.1</Version>
+  <Website>https://www.nexusmods.com/skyrimspecialedition/mods/43312</Website>
+  <Description>Create-your-own companions: stamp RaceMenu presets onto permanent template actors, manage them from an MCM, save/load with JContainers. Choose 80F+80M, 160 female-only, or 160 male-only template slots. Requires SKSE64, SkyUI, RaceMenu, JContainers, PapyrusUtil.</Description>
+  <Groups>
+    <element>Followers &amp; Companions</element>
+  </Groups>
+</fomod>

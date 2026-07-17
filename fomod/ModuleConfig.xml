@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<config xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://qconsulting.ca/fo3/ModConfig5.0.xsd">
+  <moduleName>Build a Follower</moduleName>
+  <requiredInstallFiles>
+    <folder source="00 Core" destination="" priority="0" />
+  </requiredInstallFiles>
+  <installSteps order="Explicit">
+    <installStep name="Template Pool">
+      <optionalFileGroups order="Explicit">
+        <group name="Choose your template slots" type="SelectExactlyOne">
+          <plugins order="Explicit">
+            <plugin name="Standard - 80 Female + 80 Male">
+              <description>The default mix: 80 female and 80 male permanent template slots in a private holding cell. Pick this if unsure.</description>
+              <files>
+                <folder source="01 Standard - 80 Female + 80 Male" destination="" priority="1" />
+              </files>
+              <typeDescriptor>
+                <type name="Recommended" />
+              </typeDescriptor>
+            </plugin>
+            <plugin name="Female Only - 160 Slots">
+              <description>All 160 template slots are female. No male slots in the list, so you cannot pick a male template by accident. Male RaceMenu presets cannot be stamped with this option.</description>
+              <files>
+                <folder source="02 Female Only - 160 Slots" destination="" priority="1" />
+              </files>
+              <typeDescriptor>
+                <type name="Optional" />
+              </typeDescriptor>
+            </plugin>
+            <plugin name="Male Only - 160 Slots">
+              <description>All 160 template slots are male. No female slots in the list. Female RaceMenu presets cannot be stamped with this option.</description>
+              <files>
+                <folder source="03 Male Only - 160 Slots" destination="" priority="1" />
+              </files>
+              <typeDescriptor>
+                <type name="Optional" />
+              </typeDescriptor>
+            </plugin>
+          </plugins>
+        </group>
+      </optionalFileGroups>
+    </installStep>
+  </installSteps>
+</config>

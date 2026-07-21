@@ -18,6 +18,8 @@ Standalone rework of **Lazy Followers by LazyGirl** (modification permission wit
 
 **Recommended:** powerofthree's Papyrus Extender (auto-scan playable races), Race Compatibility SKSE (custom races), Nether's Follower Framework (multi-follower management).
 
+**Mu Dynamic NormalMap:** supported automatically as of 2.4.2. Build a Follower marks its own template actors and ships a Mu condition that disables Mu only for those followers. This prevents Mu's real-time normal pass from overwriting RaceMenu skin/normal overrides after Apply; Mu stays active for the player and every other NPC.
+
 **Do not** install alongside LazyFollowers.esp or StampFollowers.esp — same role. Not save-compatible with either (new plugin + scripts); use a save that never had them, or clean-save first.
 
 ---
@@ -60,8 +62,12 @@ Gear: **CopyKit**. Stats/Spells/Combat pages tune the rest. Save finished NPCs o
 | Symptom | Fix |
 |---|---|
 | **Blue / purple head** (missing tint texture) | Use **Save my face for followers** while wearing the face, then Apply that export. Plain Presets-tab saves often have no `Textures/CharGen/Exported/<name>.dds` — RaceMenu then pins a missing tint on every head regen. |
-| Head OK but **skin tone / neck doesn't match body** | Same root cause: body gets preset skin overrides; head failed tint. Export via **Save my face for followers**, match **Race**, re-Apply. |
+| Head OK but **skin tone / neck doesn't match body** | Export via **Save my face for followers**, match **Race**, re-Apply. If it matches for a split second and then changes back, update to 2.4.2: that is Mu Dynamic NormalMap overwriting the finished RaceMenu state. Restart Skyrim after installing, then use **Fix dark/grey face** once. |
 | Dark / grey face | **Fix dark/grey face** button, or re-Apply while summoned. |
+| Presets missing from the list | Fixed in 2.4.3 — both `CharGen/Exported` and `CharGen/Presets` are now always listed. |
+| **Custom race missing from the Races list** | Improved in 2.4.4 — races from **Character Overhaul the Rework (CotR)** and **UBE** are now added automatically by exact record, with or without po3. For other race mods, po3 Papyrus Extender auto-scans (update po3 if the list stays empty). Otherwise play as that race, or look at an NPC of that race, then reopen the MCM — every race ever detected is remembered in `SKSE\Plugins\BuildAFollower\BuildAFollowerRaces.json` across saves and characters. |
+| Follower unequips gifted gear on cell change / after dismiss | Fixed in 2.4.3 — the pipeline no longer re-sets race on every load, and gear is restored around any race change. |
+| Hair color reverts after **Fix dark/grey face** | Fixed in 2.4.3 — morphs/hair are re-stamped after the rebuild. |
 | Reset/Dismiss stranded the player | Fixed in 2.4.0 — Reset only moves the **NPC**. **Teleport to NPC** is blocked while they are in the storage cell (use **Summon** instead). |
 | Preset applied but NPC looks default | Wrong slot selected in the NPC dropdown. |
 | CombatStyle row says "SkyTactics (see Debug)" | SkyTactics installed — BAF leaves styles alone. |
@@ -76,6 +82,38 @@ Shouts stay **disabled** (vanilla engine save-corruption risk — same warning a
 ---
 
 ## Changelog
+
+### 2.4.4 — voice reverting to Nord, CotR/UBE races, and rebuildable scripts
+
+- **Fixed: a follower's voice reverting to Nord.** Applying a preset re-set the
+  actor's race, and that rebuild silently discarded the voice that had just been
+  applied — which is why swapping the voice in the MCM and swapping it back
+  "fixed" it. The voice is now re-applied after the race pass, and a missing
+  voice can no longer fall back to the Nord default.
+- **Added: automatic race detection for CotR and UBE.** Their playable races are
+  now registered directly, so they appear in the **Races** list without needing
+  po3 Papyrus Extender and without having to look at an NPC of that race first.
+  **Completely optional** — both are soft dependencies. If you don't have them
+  installed, nothing changes and nothing is added to your game.
+- **Removed: the abandoned "Follower Goes on a Trip" hook.** With FGT not
+  installed the "Followers Travel" button threw a script error, and its presence
+  made the mod impossible to rebuild at all. Followers you aren't actively using
+  are handled by the normal follower system / Nether's Follower Framework.
+
+### 2.4.3 — preset visibility, custom races, hair color, and gear-unequip fixes
+- **Fixed: custom races were only detected while you were playing one.** Detection had three weak points, all fixed: (1) the po3 Papyrus Extender scan could silently fail (outdated po3, or a stuck update flag from a crash) with no hint to the user; (2) detected races were never written anywhere, so nothing carried across new games or characters; (3) guidance was unclear. Now: the update flag can no longer jam shut, an empty po3 scan logs a clear recovery message, and **every detected race is remembered in `SKSE\Plugins\BuildAFollower\BuildAFollowerRaces.json`** — once a race is seen (po3 scan, playing it, or looking at an NPC of that race before opening the MCM), it stays in the Races dropdown on every save and every character.
+- **Fixed: presets in `CharGen/Presets` were hidden whenever `CharGen/Exported` held any .jslot.** The MCM listed only one folder — a single stray export (even a leftover test file) made every preset in `Presets` invisible ("my presets cannot be found by the mod"). Both folders are now merged in the Preset dropdown, each entry keeping its correct load path; on a name clash the Exported copy wins.
+- **Fixed: followers unequipped gifted armor/weapons on cell change and after dismiss/summon.** The appearance pipeline re-asserted the NPC's race on *every* load, and `SetRace` makes the engine re-evaluate equipment. Race is now only (re)set when it actually changed or on a manual Apply/Fix, and worn gear is snapshotted and restored around it.
+- **Fixed: hair color and face morphs reverted to template defaults after Fix dark/grey face** (hair "turning blonde") for presets without an exported tint. The one-shot morph apply now re-stamps after the head rebuild and on cell loads — still without the Skin bit, so the blue-face guard is unchanged.
+- Fixed: the "no exported face tint" note now checks the folder the preset actually lives in, and counts a full head export as having a tint.
+- Everything from 2.4.2 is kept, including the Mu Dynamic NormalMap compatibility.
+
+### 2.4.2 — Mu Dynamic NormalMap compatibility
+- **Fixed the one-frame head/body match that immediately reverted** when Mu Dynamic NormalMap was installed. That visual blink is the giveaway: RaceMenu finishes correctly, then Mu's real-time normal-map pass runs afterward and replaces the follower's skin/normal state.
+- Added a plugin-owned marker keyword to all 160 template NPC bases in every FOMOD ESP variant.
+- Added `SKSE\Plugins\MuDynamicNormalMap\BuildAFollower.ini` at maximum condition priority. It disables Mu only for Build a Follower actors, leaving Mu enabled for the player and all other NPCs.
+- No new DLL, script dependency, or manual patch is required. Fully exit Skyrim after updating so Mu reloads its condition files, then re-Apply or use **Fix dark/grey face** once on an existing follower.
+- Updated FOMOD metadata and project link.
 
 ### 2.4.1 — critical crash fix
 - **Fixed a hard crash on Apply** (`skee64.dll` → `std::runtime_error: "LargestInt out of UInt range"`). 2.4.0 copied a picked preset from `CharGen/Presets` into `CharGen/Exported` by round-tripping it through JContainers. JContainers stores integers as **signed** 32-bit, so RaceMenu's unsigned `tintInfo` colors (any with a high alpha byte) were rewritten **negative** — and RaceMenu's own JSON parser crashes reading a negative value as unsigned. The mod no longer rewrites `.jslot` files at all; it reads the preset in place, exactly like the original.

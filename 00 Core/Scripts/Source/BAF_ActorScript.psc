@@ -164,9 +164,13 @@ function updateMyData(bool fullRefresh = false)
 		if(fullRefresh)
 			refreshAppearance(true)
 		elseIf(myTintlessMode)
-			; Tintless one-shot preset: morphs already live on the ActorBase and
-			; re-running CharGen would re-map a broken tint (blue face). Skip.
-			dout("Tintless preset - skipping lite reapply")
+			; Tintless preset: re-stamp morphs/hair WITHOUT the Skin bit; the
+			; pipeline clears the RaceMenu mapping again right after. Hair color
+			; and head morphs are transient reference overrides that revert on
+			; every 3D reload — skipping this left followers with the template
+			; hair color after cell changes. No Skin bit is ever applied, so the
+			; blue-face guard (no tint gets pinned) still holds.
+			refreshAppearance()
 		else
 			refreshAppearance()
 		endIf
@@ -187,8 +191,14 @@ function checkmyPresetName()
 	myActorBase.SetName(myPresetName)
 endFunction
 
+; Re-asserts this follower's voice on its own ActorBase.
+; Guarded: SetVoiceType(None) makes the engine fall back to the template's race
+; default (the templates are Nord), which is one of the ways the voice
+; "randomly" reverted to Nord after a load.
 function checkMyVoice()
-	myActorBase.SetVoiceType(myPresetVoiceType)
+	if myPresetVoiceType
+		myActorBase.SetVoiceType(myPresetVoiceType)
+	endIf
 endFunction
 
 function refreshAppearance(bool fullRefresh = false)
@@ -224,14 +234,29 @@ endFunction
 function applyPresetPipeline(bool fullRefresh = false)
 	if myPresetRace
 		Race currentRace = self.GetRace()
-		if currentRace != myPresetRace
+		bool raceDiffers = currentRace != myPresetRace
+		; Only SetRace when the race actually changed, or on a user-initiated full
+		; apply where head parts must rebind (neck-seam fix). SetRace rebuilds the
+		; actor and makes the engine re-evaluate equipment — running it on every
+		; cell load was unequipping gifted armor/weapons (the unequip-on-cell-change
+		; / unequip-after-dismiss bug). Gear is snapshotted and restored around it.
+		if raceDiffers || fullRefresh
+			Form[] wornGear = getMyGear()
 			dout("Setting race " + myPresetRace.GetName())
 			self.SetRace(myPresetRace)
-			Utility.Wait(0.35)
-		else
-			; Re-assert race so head parts rebind even when race already matches
-			self.SetRace(myPresetRace)
-			Utility.Wait(0.1)
+			if raceDiffers
+				Utility.Wait(0.35)
+			else
+				Utility.Wait(0.1)
+			endIf
+			restoreGear(wornGear)
+			; SetRace rebuilds the actor from its base, which also re-derives the
+			; voice type from the (Nord) template — the "voice keeps reverting to
+			; Nord" bug. updateMyData() applies the voice BEFORE this point, so it
+			; is discarded here and must be re-asserted after the rebuild. This is
+			; exactly what the manual MCM workaround (swap voice, then revert) was
+			; doing by hand. Same reason gear is snapshotted/restored above.
+			checkMyVoice()
 		endIf
 	endIf
 
@@ -322,9 +347,12 @@ function commitFaceTint()
 	Utility.Wait(0.3)
 	self.Enable()
 	Utility.Wait(0.4)          ; let the fresh 3D load
-	if !myTintlessMode
-		applyPresetPipeline(true)  ; re-stamp onto the fresh head (tint on disk is valid)
-	endIf
+	; Re-stamp onto the fresh head. Tinted presets get the full apply (their tint
+	; is on disk and valid). Tintless presets get their morph-only one-shot again
+	; (no Skin bit, mapping cleared after) — without it, hair color and head
+	; morphs stay reverted to the template default after the rebuild (the
+	; "hair turned blonde after Fix dark/grey face" bug).
+	applyPresetPipeline(true)
 	self.QueueNiNodeUpdate()
 	reloadingFace = false
 endFunction
@@ -410,7 +438,19 @@ bool function presetHasTintMask()
 	if myPreset == ""
 		return true
 	endIf
-	return MiscUtil.FileExists("Data/Textures/CharGen/Exported/" + presetBaseName(myPreset) + ".dds")
+	String baseName = presetBaseName(myPreset)
+	String presetDir = "Exported"
+	if StringUtil.Find(myPreset, "Presets") > -1
+		presetDir = "Presets"
+	endIf
+	if MiscUtil.FileExists("Data/Textures/CharGen/" + presetDir + "/" + baseName + ".dds")
+		return true
+	endIf
+	; A full external head export always carries its own tint next to the mesh
+	if MiscUtil.FileExists("Data/Textures/CharGen/Exported/" + baseName + ".dds") && MiscUtil.FileExists("Data/Meshes/CharGen/Exported/" + baseName + ".nif")
+		return true
+	endIf
+	return false
 endFunction
 
 ; Resolve external exported head .nif for a RaceMenu preset path like ../Exported/Name
@@ -740,6 +780,21 @@ Form[] function addGearToArray(Form[] inArray, Form inGear)
 		inArray[emptySlot] = inGear
 	endIf
 	return inArray
+endFunction
+
+; Re-equips everything worn before a SetRace rebuild. Stripped items stay in
+; the inventory, and EquipItem is a harmless no-op for anything still worn.
+function restoreGear(Form[] wornGear)
+	if !wornGear
+		return
+	endIf
+	int gIndexer = wornGear.Length
+	while gIndexer > 0
+		gIndexer -= 1
+		if wornGear[gIndexer]
+			self.EquipItem(wornGear[gIndexer], false, true)
+		endIf
+	endWhile
 endFunction
 
 Form[] function compressSpellArray(Form[] inArray)

@@ -65,6 +65,8 @@ String newPreset
 String newName
 String headMeshPath
 String presetFolder
+String[] presetFolderList
+bool suppressRaceAutosave
 
 int guiNPCList
 int guiFVoicesList
@@ -199,11 +201,12 @@ int FAPIndex
 int SKindex
 int ClassIndex
 
-;Followers Goes on a Trip
-FGTDialogueQuest travelHook
-bool fgtEnable
-bool fgtSendAway
-int guiFGTEnable
+; Legacy "Follower Goes on a Trip" integration was REMOVED in 2.4.4.
+; FGT is abandoned; when it isn't installed travelHook stayed None and the
+; "Followers Travel" button threw a Papyrus error on every use. It also made the
+; whole mod impossible to recompile (FGTDialogueQuest has no available source),
+; which blocked every future script fix. Followers you aren't using are managed
+; through the vanilla follower system / Nether's Follower Framework instead.
 Faction Property CurrentFollowerFaction Auto
 
 ;PO3Extender
@@ -238,12 +241,6 @@ Event OnConfigClose()
 		combatStyleSaveChanges = false
 		initCSValues()
 	endIf
-	if(fgtSendAway)
-		dout("Sending off NPCs...")
-		setNPCTravel()
-		dout("Sendoff finished")
-		fgtSendAway = false
-	endIf
 endEvent
 
 event OnPageReset(string page)
@@ -270,20 +267,22 @@ function sendGlobalUpdateRequest()
 endFunction
 
 function updater()
-	if(updaterIsRunning == false)
-		updaterIsRunning = true
-		if(version == 1)
-			dout("Updating from 1 -> 2")
-			guiDebugTraceModes = new String[3]
-			guiDebugTraceModes[0] = "Console"
-			guiDebugTraceModes[1] = "Papyrus log"
-			guiDebugTraceModes[2] = "Disable"
-			BAF_TraceMode.SetValueInt(0)
-			version = 2
-		endIf
-		getInstalledMods()
-		updaterIsRunning = false
+	; updaterIsRunning used to gate this whole function, but it persists in the
+	; save — a crash mid-run left it TRUE and permanently disabled race/mod
+	; detection for that save (one of the ways "custom races never show up"
+	; happens). Re-entry is harmless (every add dedupes), so only the one-time
+	; migrations stay gated, on version.
+	if(version == 1)
+		dout("Updating from 1 -> 2")
+		guiDebugTraceModes = new String[3]
+		guiDebugTraceModes[0] = "Console"
+		guiDebugTraceModes[1] = "Papyrus log"
+		guiDebugTraceModes[2] = "Disable"
+		BAF_TraceMode.SetValueInt(0)
+		version = 2
 	endIf
+	getInstalledMods()
+	loadCustomRaces()
 endFunction
 
 function initVars()
@@ -687,21 +686,65 @@ endFunction
 
 
 function getPresetList()
-	; Keep the selected list and the RaceMenu load path together. A preset found
-	; under CharGen/Presets must not be applied as though it were in Exported.
-	presetFolder = "../Exported/"
-	PresetList = MiscUtil.FilesInFolder("data/SKSE/Plugins/CharGen/Exported", ".jslot")
-	if !PresetList || PresetList.Length == 0
-		presetFolder = "../Presets/"
-		PresetList = MiscUtil.FilesInFolder("data/SKSE/Plugins/CharGen/Presets", ".jslot")
-		dout("Using CharGen/Presets folder for .jslot list")
+	; Merge BOTH preset folders. Previously Exported won outright and Presets was
+	; only listed when Exported was completely empty — so a single stray .jslot in
+	; Exported hid every preset in CharGen/Presets ("my presets cannot be found by
+	; the mod"). presetFolderList keeps the correct RaceMenu load path per entry.
+	; On a name clash the Exported copy wins (it usually has the head/tint export
+	; next to it). Paths are never rewritten — presets are read in place.
+	String[] exported = MiscUtil.FilesInFolder("data/SKSE/Plugins/CharGen/Exported", ".jslot")
+	String[] presets = MiscUtil.FilesInFolder("data/SKSE/Plugins/CharGen/Presets", ".jslot")
+
+	int total = 0
+	if exported
+		total += exported.Length
 	endIf
-	if !PresetList || PresetList.Length == 0
-		presetFolder = ""
+	if presets
+		total += presets.Length
+	endIf
+
+	presetFolder = ""
+	if total == 0
 		PresetList = new String[1]
 		PresetList[0] = "(no presets found)"
+		presetFolderList = new String[1]
+		presetFolderList[0] = ""
 		dout("MiscUtil found no .jslot under CharGen/Exported or CharGen/Presets — check PapyrusUtil + RaceMenu paths")
+		return
 	endIf
+
+	PresetList = Utility.CreateStringArray(total)
+	presetFolderList = Utility.CreateStringArray(total)
+	int w = 0
+	int i = 0
+	if exported
+		while i < exported.Length
+			PresetList[w] = exported[i]
+			presetFolderList[w] = "../Exported/"
+			w += 1
+			i += 1
+		endWhile
+	endIf
+	if presets
+		i = 0
+		while i < presets.Length
+			bool clash = false
+			if exported
+				clash = exported.Find(presets[i]) > -1
+			endIf
+			if !clash
+				PresetList[w] = presets[i]
+				presetFolderList[w] = "../Presets/"
+				w += 1
+			endIf
+			i += 1
+		endWhile
+	endIf
+	if w < total
+		PresetList = Utility.ResizeStringArray(PresetList, w)
+		presetFolderList = Utility.ResizeStringArray(presetFolderList, w)
+	endIf
+	dout("Preset list: " + w + " .jslot merged from CharGen/Exported + CharGen/Presets")
 endFunction
 
 function getNPCPResetList()
@@ -787,8 +830,6 @@ function drawMainMenu()
 	guiGlobalApply = AddToggleOption("Apply to all", false)
 	guiSummonAll = AddToggleOption("Summon all", false)
 	guiSaveMyFace = AddInputOption("Save my face for followers", "click me")
-	AddEmptyOption()
-	guiFGTEnable = AddToggleOption("Followers Travel", false)
 endFunction
 
 function drawStatsMenu()
@@ -979,11 +1020,11 @@ int function getPresetIndex()
 
 
 	if(Prindex == -1)
-		newPreset = presetFolder + PresetList[0]
+		newPreset = presetFolderList[0] + PresetList[0]
 		return 0
 	endIf
 
-	newPreset = presetFolder + PresetList[Prindex]
+	newPreset = presetFolderList[Prindex] + PresetList[Prindex]
 	return Prindex
 endFunction
 
@@ -1174,23 +1215,17 @@ String function parsePreset(String inString)
 endFunction
 
 function getInstalledMods()
-	if(Game.IsPluginInstalled("FGT.esp"))
-		fgtEnable = true
-		travelHook = Game.GetFormFromFile(0x12CA, "FGT.esp") as FGTDialogueQuest
-		dout("Follower Goes on a Trip detected")
-	else
-		fgtEnable = false
-		dout("Follower Goes on a Trip NOT detected")
-	endIf
-
 	if(MiscUtil.FileExists("data/SKSE/plugins/po3_PapyrusExtender.dll"))
 		po3ExtenderInstalled = true
 		getCustomRacesPO3()
 		dout("po3_PapyrusExtender detected — scanning playable races")
 	else
 		po3ExtenderInstalled = false
-		dout("po3_PapyrusExtender NOT detected (optional — improves custom race lists)")
+		dout("po3_PapyrusExtender NOT detected — custom races are only added when you play as one or look at an NPC of that race (then remembered via BuildAFollowerRaces.json)")
 	endIf
+
+	; Known race packs are seeded by exact FormID and do not depend on po3.
+	seedKnownCustomRaces()
 
 	skyTacticsInstalled = Game.IsPluginInstalled("SkyTactics.esp") || MiscUtil.FileExists("data/SKSE/Plugins/SkyTactics.dll")
 
@@ -1305,11 +1340,114 @@ function addCustomRace(Race inRace)
 		RacesList = Utility.ResizeStringArray(RacesList, RacesList.Length + 1, inRace.GetName())
 
 		dOut("Added custom race " + RacesList[RacesList.Length - 1])
+		if !suppressRaceAutosave
+			saveCustomRaces()
+		endIf
 	endIf
+endFunction
+
+; Persists the full race list (vanilla pool + every detected custom race) to a
+; small JSON, so custom races survive new games, character swaps and po3-less
+; installs. Loaded on every game load from updater(); entries dedupe through
+; addCustomRace, and races from uninstalled mods are skipped on load.
+function saveCustomRaces()
+	int jr = JArray.object()
+	int n = BAF_Races.GetSize()
+	int i = 0
+	while i < n
+		JArray.addForm(jr, BAF_Races.GetAt(i))
+		i += 1
+	endWhile
+	JValue.writeToFile(jr, "Data/SKSE/Plugins/BuildAFollower/BuildAFollowerRaces.json")
+	JValue.release(jr)
+endFunction
+
+function loadCustomRaces()
+	String path = "Data/SKSE/Plugins/BuildAFollower/BuildAFollowerRaces.json"
+	if !MiscUtil.FileExists(path)
+		return
+	endIf
+	int jr = JValue.readFromFile(path)
+	if jr == 0
+		return
+	endIf
+	suppressRaceAutosave = true
+	int n = JArray.count(jr)
+	int i = 0
+	while i < n
+		Race r = JArray.getForm(jr, i) as Race
+		if r
+			addCustomRace(r)
+		endIf
+		i += 1
+	endWhile
+	suppressRaceAutosave = false
+	JValue.release(jr)
+endFunction
+
+; --- Known custom-race packs (CotR / UBE) ------------------------------------
+; Both ship their playable races as RaceCompatibility-derived RACE records and
+; register them at runtime through their own Papyrus race controllers
+; (DZ_*RaceController / UBE_*RaceController + RegisterCustomRaceScript).
+; po3's GetAllRaces has proven unreliable on some builds, which is why these
+; races never showed up in the MCM and users had to crosshair an NPC of that
+; race first. Seeding them here by exact FormID + plugin makes them appear with
+; or without po3, on any save, with no NPC required.
+;
+; FormIDs were verified by parsing the shipped plugins directly.
+; Vampire variants are deliberately excluded: their records are flagged
+; non-playable and the game's vampirism system assigns them, not the user.
+; NOTE: CotR and UBE reuse the SAME RaceCompatibility FormIDs for the same
+; vanilla-race slot, so every lookup must be scoped to its own plugin.
+function seedKnownCustomRaces()
+	seedRacePack("COR_AllRace.esp")
+	seedRacePack("UBE_AllRace.esp")
+endFunction
+
+function seedRacePack(String pluginName)
+	if !Game.IsPluginInstalled(pluginName)
+		return
+	endIf
+
+	int[] ids = new int[10]
+	ids[0] = 0x005734   ; Breton
+	ids[1] = 0x05A179   ; Imperial
+	ids[2] = 0x05A184   ; Nord
+	ids[3] = 0x05A18E   ; Redguard
+	ids[4] = 0x05A198   ; Dark Elf
+	ids[5] = 0x05A1A2   ; High Elf
+	ids[6] = 0x05A1AC   ; Wood Elf
+	ids[7] = 0x05A1B0   ; Orc
+	ids[8] = 0x07A4D5   ; UBE CustomRace01 (not present in CotR -> skipped)
+	ids[9] = 0x07A4D6   ; UBE CustomRace02 (not present in CotR -> skipped)
+
+	int before = BAF_Races.GetSize()
+	suppressRaceAutosave = true
+	int i = 0
+	while i < ids.Length
+		Race r = Game.GetFormFromFile(ids[i], pluginName) as Race
+		if r
+			addCustomRace(r)
+		endIf
+		i += 1
+	endWhile
+	suppressRaceAutosave = false
+
+	int added = BAF_Races.GetSize() - before
+	if added > 0
+		saveCustomRaces()
+	endIf
+	dout("Race pack " + pluginName + " detected - added " + added + " new races")
 endFunction
 
 function getCustomRacesPO3()
 	Race[] foundRaces = PO3_SKSEFunctions.GetAllRaces()
+	if !foundRaces || foundRaces.Length == 0
+		; Old/incompatible po3 build: GetAllRaces fails silently from the user's
+		; view and customs never appear. Say how to recover.
+		dout("po3 GetAllRaces returned nothing — update po3 Papyrus Extender. Without it, open the MCM while playing (or looking at an NPC of) the custom race to add it manually; it is remembered afterwards.")
+		return
+	endIf
 	int rIndexer = foundRaces.Length
 
 	while(rIndexer > 0)
@@ -1364,29 +1502,6 @@ function getCustomVoiceMale(Actor inActor)
 	endIf
 endFunction
 
-function setNPCTravel()
-	int ndx = BAF_NPCs.GetSize()
-	bool continue = true
-
-	while(ndx > 0 && continue)
-		ndx -= 1
-		tarActor = BAF_NPCs.GetAt(ndx) as Actor
-		actorScript = tarActor as BAF_ActorScript
-
-		if(actorScript.getMyPreset() != "" && tarActor.GetFactionRank(CurrentFollowerFaction) < 1)
-			actorScript.checkmyPresetName()
-			continue = travelHook.startWander(tarActor)
-
-			if(continue)
-				actorScript.summonMe(PlayerRef)
-				dout("Travel sendoff for " + actorScript.getMyPresetName())
-			else
-				dout("Travel sendoff for " + actorScript.getMyPresetName() + " failed. All NPC slots full")
-			endIf			
-		endIf
-	endWhile	
-endFunction
-
 function summonAll()
 	int ndx = BAF_NPCs.GetSize()
 
@@ -1421,6 +1536,8 @@ endFunction
 event OnOptionHighlight(int a_option)
 	if (a_option == guiFVoicesList || a_option == guiMVoicesList)
 		SetInfoText("The selected template's sex determines which voice list is applied. Starred are vanilla followerfriendly")
+	elseIf(a_option == guiRacesList)
+		SetInfoText("This follower's race. Custom races: po3 Papyrus Extender auto-scans them, or open the MCM while playing as / looking at an NPC of that race. Every detected race is remembered in BuildAFollowerRaces.json from then on.")
 	elseIf(a_option == guiSummonToggle)
 		SetInfoText("Teleports selected NPC to your location")
 	elseIf(a_option == guiTeleportToggle)
@@ -1453,8 +1570,6 @@ event OnOptionHighlight(int a_option)
 		SetInfoText("Can disable if you have other mods handling behaviour for NPCs not currently following the player")
 	elseIf(a_option == guiDebugPO3Spells)
 		SetInfoText("Loads all spells from load order. WARNING - Can result in a long list to scroll and not all spells are guaranteed to work on NPCs")
-	elseIf(a_option == guiFGTEnable)
-		SetInfoText("Non-actively following NPCs will be handed over to Follower Goes on a Trip mod. Max 24 in total")
 	elseIf(a_option == guiSummonAll)
 		SetInfoText("Summon all NPCs not currently following you")
 	elseIf(a_option == guiPresetHeadMesh)
@@ -1675,13 +1790,6 @@ event OnOptionSelect(int a_option)
 		endIf
 
 		ShowMessage("Added " + (BAF_Spells.GetSize() - numspells) + " spells", false, "OK")
-	elseIf(a_option == guiFGTEnable)
-		msgBool = ShowMessage("Summon all unassigned followers and send them on a trip?",  true, "Yes", "No")
-
-		if(msgBool)
-			fgtSendAway = true
-			ShowMessage("Exit menu to start process")
-		endIf
 	elseIf(a_option == guiSummonAll)
 		msgBool = ShowMessage("Summon all unassigned followers?",  true, "Yes", "No")
 
@@ -2069,7 +2177,7 @@ event OnOptionMenuAccept(int a_option, int a_index)
 			SetMenuOptionValue(guiRacesList,RacesList[Rindex])
 	elseIf(a_option == guiPresetsList)
 		Prindex = a_index
-		newPreset = presetFolder + PresetList[Prindex]
+		newPreset = presetFolderList[Prindex] + PresetList[Prindex]
 		SetMenuOptionValue(guiPresetsList,PresetList[Prindex])
 			SetToggleOptionValue(guiPresetHeadMesh, getHasHeadMesh())
 		elseIf(a_option == guiNPCPresetList)
